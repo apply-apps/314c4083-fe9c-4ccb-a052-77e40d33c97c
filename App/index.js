@@ -1,120 +1,195 @@
 // Filename: index.js
 // Combined code from all files
 
-import React from 'react';
-import { SafeAreaView, StyleSheet, Text, ScrollView, View, Button, ActivityIndicator, Image } from 'react-native';
-import axios from 'axios';
+import React, { useEffect, useState, useCallback } from 'react';
+import { SafeAreaView, StyleSheet, View, Button, Text } from 'react-native';
+import { GameEngine } from 'react-native-game-engine';
 
-const workouts = [
-    { id: '1', name: 'Push-ups', sets: 3, reps: 15, image: 'https://picsum.photos/200/200?random=1' },
-    { id: '2', name: 'Squats', sets: 4, reps: 20, image: 'https://picsum.photos/200/200?random=2' },
-    { id: '3', name: 'Lunges', sets: 3, reps: 10, image: 'https://picsum.photos/200/200?random=3' },
-    { id: '4', name: 'Plank', sets: 5, reps: '1 min', image: 'https://picsum.photos/200/200?random=4' },
-    { id: '5', name: 'Burpees', sets: 3, reps: 15, image: 'https://picsum.photos/200/200?random=5' },
-];
-
-const WorkoutList = () => {
-    return (
-        <View style={styles.listContainer}>
-            {workouts.map((workout) => (
-                <View key={workout.id} style={styles.workoutContainer}>
-                    <Image source={{ uri: workout.image }} style={styles.workoutImage} />
-                    <View style={styles.workoutDetails}>
-                        <Text style={styles.workoutName}>{workout.name}</Text>
-                        <Text style={styles.workoutInfo}>Sets: {workout.sets}</Text>
-                        <Text style={styles.workoutInfo}>Reps: {workout.reps}</Text>
-                    </View>
-                </View>
-            ))}
-        </View>
-    );
+const Constants = {
+    GRID_SIZE: 20,
+    CELL_SIZE: 20,
 };
 
-const App = () => {
-    const [loading, setLoading] = React.useState(false);
-    const [message, setMessage] = React.useState('');
+const Head = ({ position, size }) => {
+    return (
+        <View style={{
+            width: size,
+            height: size,
+            backgroundColor: 'green',
+            position: 'absolute',
+            left: position[0] * size,
+            top: position[1] * size
+        }} />
+    );
+}
 
-    const fetchMessage = async () => {
-        setLoading(true);
-        try {
-            const response = await axios.get('http://apihub.p.appply.xyz:3300/motd');
-            setMessage(response.data.message);
-        } catch (error) {
-            setMessage('Failed to fetch the message of the day.');
-        } finally {
-            setLoading(false);
+const Food = ({ position, size }) => {
+    return (
+        <View style={{
+            width: size,
+            height: size,
+            backgroundColor: 'red',
+            position: 'absolute',
+            left: position[0] * size,
+            top: position[1] * size
+        }} />
+    );
+}
+
+const Tail = ({ elements, size }) => {
+    return (
+        <>
+            {elements.map((element, index) => (
+                <View key={index} style={{
+                    width: size,
+                    height: size,
+                    backgroundColor: 'blue',
+                    position: 'absolute',
+                    left: element[0] * size,
+                    top: element[1] * size
+                }} />
+            ))}
+        </>
+    );
+}
+
+const randomBetween = (min, max) => {
+    return Math.floor(Math.random() * (max - min + 1) + min);
+};
+
+const GameLoop = (entities, { touches, dispatch, events }) => {
+    let head = entities.head;
+    let food = entities.food;
+    let tail = entities.tail;
+
+    const move = touches.find(x => x.type === "move");
+
+    if (move && move.event.number > 0) {
+        const event = move.event;
+        const deltaX = event.pageX - event.locationX;
+        const deltaY = event.pageY - event.locationY;
+
+        if (Math.abs(deltaX) > Math.abs(deltaY)) {
+            if (deltaX > 0) { // Swipe right
+                head.xspeed = 1;
+                head.yspeed = 0;
+            } else { // Swipe left
+                head.xspeed = -1;
+                head.yspeed = 0;
+            }
+        } else {
+            if (deltaY > 0) { // Swipe down
+                head.xspeed = 0;
+                head.yspeed = 1;
+            } else { // Swipe up
+                head.xspeed = 0;
+                head.yspeed = -1;
+            }
         }
-    };
+    }
+
+    head.nextMove -= 1;
+    if (head.nextMove === 0) {
+        head.nextMove = head.updateFrequency;
+
+        if (tail.elements.length > 0) {
+            tail.elements = [[...head.position], ...tail.elements.slice(0, -1)];
+        }
+
+        head.position[0] += head.xspeed;
+        head.position[1] += head.yspeed;
+
+        if (head.position[0] < 0 || head.position[0] >= Constants.GRID_SIZE || head.position[1] < 0 || head.position[1] >= Constants.GRID_SIZE) {
+            dispatch({ type: "game-over" });
+        }
+
+        for (let i = 0; i < tail.elements.length; i++) {
+            if (head.position[0] === tail.elements[i][0] && head.position[1] === tail.elements[i][1]) {
+                dispatch({ type: "game-over" });
+            }
+        }
+
+        if (head.position[0] === food.position[0] && head.position[1] === food.position[1]) {
+            tail.elements = [[...head.position], ...tail.elements];
+            food.position = [randomBetween(0, Constants.GRID_SIZE - 1), randomBetween(0, Constants.GRID_SIZE - 1)];
+            dispatch({ type: "score" });
+        }
+    }
+
+    return entities;
+};
+
+export default function App() {
+    const [running, setRunning] = useState(false);
+    const [gameEngine, setGameEngine] = useState(null);
+    const [score, setScore] = useState(0);
+
+    useEffect(() => {
+        setRunning(false);
+    }, []);
 
     return (
-        <SafeAreaView style={styles.container}>
-            <Text style={styles.title}>Workout Tracker</Text>
-            <Button title="Get Message of the Day" onPress={fetchMessage} />
-            {loading ? (
-                <ActivityIndicator size="large" color="#0000ff" style={styles.loader} />
-            ) : (
-                message !== '' && <Text style={styles.motd}>{message}</Text>
-            )}
-            <ScrollView style={styles.scrollView}>
-                <WorkoutList />
-            </ScrollView>
+        <SafeAreaView style={styles.safeArea}>
+            <View style={styles.container}>
+                <GameEngine
+                    ref={(ref) => { setGameEngine(ref); }}
+                    style={styles.gameEngine}
+                    systems={[GameLoop]}
+                    entities={{
+                        head: { position: [0, 0], size: 20, xspeed: 1, yspeed: 0, updateFrequency: 10, nextMove: 10, renderer: <Head /> },
+                        food: { position: [Math.floor(Math.random() * Constants.GRID_SIZE), Math.floor(Math.random() * Constants.GRID_SIZE)], size: 20, renderer: <Food /> },
+                        tail: { size: 20, elements: [], renderer: <Tail /> }
+                    }}
+                    running={running}
+                    onEvent={(e) => {
+                        switch (e.type) {
+                            case 'game-over':
+                                setRunning(false);
+                                gameEngine.stop();
+                                break;
+                            case 'score':
+                                setScore(score + 1);
+                                break;
+                        }
+                    }}
+                />
+                <Text style={styles.score}>Score: {score}</Text>
+                {!running &&
+                    <Button title="Start Game" onPress={() => {
+                        setScore(0);
+                        setRunning(true);
+                        gameEngine.swap({
+                            head: { position: [0, 0], size: 20, xspeed: 1, yspeed: 0, updateFrequency: 10, nextMove: 10, renderer: <Head /> },
+                            food: { position: [Math.floor(Math.random() * Constants.GRID_SIZE), Math.floor(Math.random() * Constants.GRID_SIZE)], size: 20, renderer: <Food /> },
+                            tail: { size: 20, elements: [], renderer: <Tail /> }
+                        });
+                        gameEngine.start();
+                    }} />
+                }
+            </View>
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        paddingTop: 50,
-        paddingHorizontal: 20,
+    safeArea: {
         flex: 1,
         backgroundColor: '#fff',
     },
-    title: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        marginBottom: 20,
-    },
-    motd: {
-        fontSize: 16,
-        color: '#333',
-        marginVertical: 20,
-    },
-    scrollView: {
-        marginTop: 20,
-    },
-    loader: {
-        marginTop: 20,
-    },
-    listContainer: {
-        flexDirection: 'column',
-        alignItems: 'center',
-    },
-    workoutContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 20,
-        backgroundColor: '#f9f9f9',
-        borderRadius: 10,
-        padding: 10,
-        width: '100%',
-    },
-    workoutImage: {
-        width: 80,
-        height: 80,
-        marginRight: 20,
-        borderRadius: 10,
-    },
-    workoutDetails: {
+    container: {
         flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    workoutName: {
-        fontSize: 18,
-        fontWeight: 'bold',
+    gameEngine: {
+        width: Constants.GRID_SIZE * 20,
+        height: Constants.GRID_SIZE * 20,
+        backgroundColor: '#f3f3f3',
+        borderColor: '#333',
+        borderWidth: 1,
     },
-    workoutInfo: {
-        fontSize: 16,
-        color: '#666',
+    score: {
+        fontSize: 20,
+        margin: 20,
     },
 });
-
-export default App;
